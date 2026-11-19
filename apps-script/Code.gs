@@ -20,7 +20,10 @@ const LAB_MICE = {
   MAX_PROGRESS_LENGTH: 40000
 };
 
+const DIFFICULTIES = ['easy', 'normal', 'hard'];
+
 const DEFAULT_SETTINGS = {
+  difficulty: 'normal',
   level2Open: false,
   level3Open: false,
   level4Open: false,
@@ -153,7 +156,7 @@ function saveTeacherSettings_(password, newSettings) {
   ensureSheets_(ss);
   const current = readSettings_(ss);
   Object.keys(DEFAULT_SETTINGS).forEach(k => {
-    if (newSettings && Object.prototype.hasOwnProperty.call(newSettings, k)) current[k] = Boolean(newSettings[k]);
+    if (newSettings && Object.prototype.hasOwnProperty.call(newSettings, k)) current[k] = cleanSetting_(k, newSettings[k]);
   });
   writeSettings_(ss, current);
   return current;
@@ -223,14 +226,23 @@ function readSettings_(ss) {
   if (!s || s.getLastRow() < 2) return result;
   s.getRange(2, 1, s.getLastRow() - 1, 2).getValues().forEach(([k, v]) => {
     k = String(k);
-    if (Object.prototype.hasOwnProperty.call(result, k)) result[k] = String(v).toLowerCase() === 'true';
+    if (Object.prototype.hasOwnProperty.call(result, k)) result[k] = cleanSetting_(k, v);
   });
   return result;
 }
 
+// 설정 값 정리: difficulty는 글자, 나머지는 참/거짓
+function cleanSetting_(k, v) {
+  if (k === 'difficulty') {
+    const s = String(v || '').toLowerCase();
+    return DIFFICULTIES.indexOf(s) !== -1 ? s : DEFAULT_SETTINGS.difficulty;
+  }
+  return v === true || String(v).toLowerCase() === 'true';
+}
+
 function writeSettings_(ss, settings) {
   const s = ss.getSheetByName(LAB_MICE.SETTINGS_SHEET);
-  const rows = Object.keys(DEFAULT_SETTINGS).map(k => [k, Boolean(settings[k])]);
+  const rows = Object.keys(DEFAULT_SETTINGS).map(k => [k, cleanSetting_(k, settings[k])]);
   if (s.getLastRow() > 1) s.getRange(2, 1, s.getLastRow() - 1, 2).clearContent();
   s.getRange(2, 1, rows.length, 2).setValues(rows);
 }

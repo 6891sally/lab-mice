@@ -9,7 +9,13 @@
 
   const Core = window.LabMiceCore;
   const Api = window.LabApi;
-  const PUZZLES = window.LAB_PUZZLES || [];
+  const PUZZLE_SETS = window.LAB_PUZZLE_SETS || {};
+  const DIFFICULTY = {
+    easy:   { label: '입문', grade: '3~4학년', icon: '🌱' },
+    normal: { label: '기본', grade: '5~6학년', icon: '🧀' },
+    hard:   { label: '도전', grade: '영재·심화', icon: '🔥' }
+  };
+  let PUZZLES = PUZZLE_SETS.normal || [];
   const CONFIG = window.LAB_CONFIG || {};
   const LEVELS = [0, 1, 2, 3, 4, 5];
   const STORE = 'labMice2_';
@@ -24,29 +30,32 @@
   };
 
   const THEMES = {
-    0: { icon: '🐣', name: '치즈 연습실', color: '#d97706', desc: '규칙을 익히는 5×5 연습 문제', chips: ['기본 규칙'] },
-    1: { icon: '🌱', name: '기초 연구실', color: '#16a34a', desc: '쥐와 치즈가 붙어 있지 않아요. 길을 잘 계획하세요.', chips: ['6×6'] },
-    2: { icon: '🧱', name: '미로 연구실', color: '#2563eb', desc: '벽이 생겼어요. 벽은 넘어갈 수 없어요.', chips: ['7×7', '🧱 벽'] },
-    3: { icon: '🪤', name: '덫 연구실', color: '#0d9488', desc: '덫 칸은 아무도 지나갈 수 없어요.', chips: ['7×7', '🧱 벽', '🪤 덫'] },
-    4: { icon: '➜', name: '일방통행 연구실', color: '#7c3aed', desc: '화살표 칸에서는 화살표 방향으로만 나가요.', chips: ['8×8', '➜ 일방통행'] },
-    5: { icon: '🧪', name: '시약 연구실', color: '#be123c', desc: '시약은 같은 색 쥐가 꼭 지나가야 해요.', chips: ['9×9', '🧪 시약', '모든 장치'] }
+    0: { icon: '🐣', name: '치즈 연습실', color: '#d97706', desc: '규칙을 익히는 연습 문제', chips: ['기본 규칙'] },
+    1: { icon: '🌱', name: '기초 연구실', color: '#16a34a', desc: '쥐가 조금 늘어나요. 길을 잘 계획하세요.', chips: [] },
+    2: { icon: '🧱', name: '미로 연구실', color: '#2563eb', desc: '벽이 생겼어요. 벽은 넘어갈 수 없어요.', chips: ['🧱 벽'] },
+    3: { icon: '🪤', name: '덫 연구실', color: '#0d9488', desc: '덫 칸은 아무도 지나갈 수 없어요.', chips: ['🧱 벽', '🪤 덫'] },
+    4: { icon: '➜', name: '일방통행 연구실', color: '#7c3aed', desc: '화살표 칸에서는 화살표 방향으로만 나가요.', chips: ['➜ 일방통행'] },
+    5: { icon: '🧪', name: '시약 연구실', color: '#be123c', desc: '시약은 같은 색 쥐가 꼭 지나가야 해요.', chips: ['🧪 시약', '모든 장치'] }
   };
 
-  // 별점 기준: 목표 시간(초), 실수 허용(별3), 실수 허용(별2)
-  const SCORE_RULES = {
-    0: { target: 90, ok3: 2, ok2: 5 },
-    1: { target: 150, ok3: 3, ok2: 7 },
-    2: { target: 210, ok3: 4, ok2: 9 },
-    3: { target: 240, ok3: 4, ok2: 9 },
-    4: { target: 360, ok3: 5, ok2: 11 },
-    5: { target: 480, ok3: 6, ok2: 13 }
-  };
+  // 별점 기준: 판 크기에 맞춰 목표 시간(초)과 실수 허용 횟수를 정함
+  function scoreRule(p) {
+    const open = p.rows * p.cols - (p.traps || []).length;
+    return { target: Math.max(60, Math.round(open * 4 / 10) * 10), ok3: 2 + p.level, ok2: 6 + p.level * 2 };
+  }
   const UNLOCK_NEED = 3; // 이전 레벨에서 몇 문제를 풀어야 열리는지
 
   const DEFAULT_SETTINGS = {
+    difficulty: 'normal',
     level2Open: false, level3Open: false, level4Open: false, level5Open: false,
     hintsEnabled: true, timerVisible: true, starsVisible: true
   };
+
+  function useDifficulty(key) {
+    const k = PUZZLE_SETS[key] ? key : 'normal';
+    PUZZLES = PUZZLE_SETS[k] || [];
+    return k;
+  }
 
   /* ---------- 저장소 ---------- */
   function lsGet(k, fb) { try { const v = localStorage.getItem(STORE + k); return v === null ? fb : v; } catch (e) { return fb; } }
@@ -69,7 +78,10 @@
     nickname: lsGet('nickname', ''),
     studentId: makeStudentId(),
     progress: safeParse(lsGet('progress', '{}'), {}),
-    settings: Object.assign({}, DEFAULT_SETTINGS, Api.enabled ? {} : { level2Open: true, level3Open: true, level4Open: true, level5Open: true }),
+    settings: Object.assign({}, DEFAULT_SETTINGS, Api.enabled ? {} : {
+      level2Open: true, level3Open: true, level4Open: true, level5Open: true,
+      difficulty: lsGet('offlineDifficulty', 'normal')
+    }),
     // 게임
     puzzle: null, g: null,
     paths: {}, drawing: null, strokeErased: false,
@@ -135,8 +147,11 @@
 
   function applySettings(s) {
     const next = Object.assign({}, DEFAULT_SETTINGS, s);
+    if (!Api.enabled) next.difficulty = state.settings.difficulty;
     const changed = JSON.stringify(next) !== JSON.stringify(state.settings);
     state.settings = next;
+    // 문제를 푸는 중에는 문제 세트를 바꾸지 않고, 목록으로 돌아갈 때 바꿈
+    if (state.view !== 'GAME') useDifficulty(next.difficulty);
     if (changed && state.view === 'LEVELS') render();
   }
 
@@ -164,6 +179,7 @@
   function setView(v) {
     if (v !== 'GAME') stopTimer();
     if (v !== 'TEACHER' && state.dashHandle) { clearInterval(state.dashHandle); state.dashHandle = null; }
+    if (v === 'LEVELS') useDifficulty(state.settings.difficulty);
     state.view = v;
     render();
   }
@@ -233,17 +249,20 @@
 
   function renderLevels(app) {
     const solved = solvedCount(), total = PUZZLES.length;
+    const dk = useDifficulty(state.settings.difficulty), D = DIFFICULTY[dk];
     let html = `
       <div class="page"><div class="wrap">
         <div class="topbar">
           <div class="between">
-            <div><div class="small">연구원</div><div class="name">${esc(state.nickname)}</div></div>
+            <div><div class="small">연구원 · ${D.icon} ${D.label} 난이도 (${D.grade})</div><div class="name">${esc(state.nickname)}</div></div>
             <div class="stat"><b>${solved}</b> / ${total} 해결${state.settings.starsVisible ? `<div class="small">⭐ ${totalStars()}</div>` : ''}</div>
           </div>
           <div class="progress"><i style="width:${total ? (solved / total * 100) : 0}%"></i></div>
           <div class="row" style="margin-top:10px">
             <button class="btn btn-sm btn-ghost" id="rulesBtn">📖 규칙</button>
             <button class="btn btn-sm btn-ghost" id="changeName">이름 변경</button>
+            ${Api.enabled ? '' : `<select class="btn btn-sm btn-ghost" id="offlineDiff">${Object.keys(DIFFICULTY).map(k =>
+              `<option value="${k}" ${k === dk ? 'selected' : ''}>${DIFFICULTY[k].label} (${DIFFICULTY[k].grade})</option>`).join('')}</select>`}
             <span class="grow"></span>
             <button class="btn btn-sm btn-ghost" id="homeBtn">🏠</button>
           </div>
@@ -252,6 +271,9 @@
 
     LEVELS.forEach(lv => {
       const t = THEMES[lv], list = levelPuzzles(lv), unlocked = isLevelUnlocked(lv);
+      if (!list.length) return;
+      const maxPairs = Math.max(...list.map(p => p.pairs.length));
+      const chips = [`${list[0].rows}×${list[0].cols}`, `🐭 최대 ${maxPairs}마리`].concat(t.chips);
       html += `
         <section class="level-card ${unlocked ? '' : 'locked'}" style="--lv:${t.color}">
           <div class="level-head">
@@ -259,7 +281,7 @@
               <div class="level-name display">${unlocked ? t.icon : '🔒'} LEVEL ${lv}</div>
               <div class="level-sub">${t.name} <span class="small">(${levelSolved(lv)}/${list.length})</span></div>
               <div class="level-desc">${unlocked ? t.desc : lockReason(lv)}</div>
-              <div class="chips">${t.chips.map(c => `<span class="chip">${c}</span>`).join('')}</div>
+              <div class="chips">${chips.map(c => `<span class="chip">${c}</span>`).join('')}</div>
             </div>
           </div>
           <div class="puzzle-grid">
@@ -287,6 +309,11 @@
     });
     $('changeName').onclick = () => setView('START');
     $('homeBtn').onclick = () => setView('ROLE');
+    if ($('offlineDiff')) $('offlineDiff').onchange = e => {
+      state.settings.difficulty = e.target.value;
+      lsSet('offlineDifficulty', e.target.value);
+      render();
+    };
     $('rulesBtn').onclick = () => { state.modal = () => rulesModal(null); render(); bindModal(); };
     $('resetMine').onclick = () => {
       if (!confirm('이 기기의 내 게임 기록을 모두 지울까요?')) return;
@@ -488,7 +515,7 @@
     if (u) u.textContent = `${used}/${open}`;
     const m = $('mistakeText');
     if (m) {
-      const rule = SCORE_RULES[p.level];
+      const rule = scoreRule(p);
       m.textContent = `실수 ${state.mistakes}${state.hintCap < 3 ? ` · 최대 ${'⭐'.repeat(state.hintCap)}` : ''}`;
       m.className = 'pill' + (state.mistakes > rule.ok3 ? ' warn' : '');
     }
@@ -740,7 +767,7 @@
 
   /* ---------- 승리 ---------- */
   function computeScore() {
-    const rule = SCORE_RULES[state.puzzle.level];
+    const rule = scoreRule(state.puzzle);
     const lines = [];
     let stars = 3;
     if (state.mistakes > rule.ok2) { stars = 1; lines.push([`실수 ${state.mistakes}회 (${rule.ok2}회 초과)`, -2]); }
@@ -791,7 +818,11 @@
       return { t, path };
     });
     const dur = 1400, t0 = performance.now();
+    let finished = false;
+    const finish = () => { if (finished) return; finished = true; state.animating = false; done(); };
+    setTimeout(finish, dur + 900); // 탭이 가려져 애니메이션이 멈춰도 결과 창은 뜨도록
     function frame(now) {
+      if (finished) return;
       const k = Math.min(1, (now - t0) / dur);
       runners.forEach(({ t, path }) => {
         const pos = k * (path.length - 1), i = Math.floor(pos), f = pos - i;
@@ -800,7 +831,7 @@
         t.setAttribute('y', a.r + .72 + (b.r - a.r) * f);
       });
       if (k < 1) requestAnimationFrame(frame);
-      else setTimeout(() => { state.animating = false; done(); }, 350);
+      else setTimeout(finish, 350);
     }
     requestAnimationFrame(frame);
   }
@@ -925,6 +956,19 @@
           ${rows}
         </section>
         <section class="section">
+          <h3>🎚️ 난이도 (학년군)</h3>
+          <div class="small" style="margin-bottom:10px">바꾸면 학생 화면의 문제 세트가 바뀌어요 (최대 30초 안에 반영). 난이도마다 기록은 따로 저장돼요.</div>
+          <div class="diff-grid">
+            ${Object.keys(DIFFICULTY).map(k => {
+              const D = DIFFICULTY[k], set = PUZZLE_SETS[k] || [];
+              const sizes = set.length ? `${set[0].rows}×${set[0].cols} → ${set[set.length - 1].rows}×${set[set.length - 1].cols}` : '';
+              return `<button class="diff-btn ${state.settings.difficulty === k ? 'on' : ''}" data-diff="${k}">
+                <span class="ic">${D.icon}</span><b>${D.label}</b><span class="small">${D.grade}</span><span class="small">${sizes}</span>
+              </button>`;
+            }).join('')}
+          </div>
+        </section>
+        <section class="section">
           <h3>🔓 레벨 공개 설정</h3>
           <div class="small" style="margin-bottom:8px">공개해도 이전 레벨에서 ${UNLOCK_NEED}문제를 풀어야 열려요.</div>
           ${LEVELS.map(lv => `
@@ -949,11 +993,14 @@
     $('sortProgress').onclick = () => { state.teacherSort = 'progress'; renderTeacher(app); };
     $('refreshDash').onclick = refreshDashboard;
     app.querySelectorAll('[data-setting]').forEach(b => { b.onclick = () => toggleSetting(b.dataset.setting); });
+    app.querySelectorAll('[data-diff]').forEach(b => {
+      b.onclick = () => { if (b.dataset.diff !== state.settings.difficulty) toggleSetting('difficulty', b.dataset.diff); };
+    });
     $('clearStudents').onclick = clearStudents;
   }
 
-  async function toggleSetting(key) {
-    const next = Object.assign({}, state.settings, { [key]: !state.settings[key] });
+  async function toggleSetting(key, value) {
+    const next = Object.assign({}, state.settings, { [key]: value !== undefined ? value : !state.settings[key] });
     try {
       const d = await Api.saveSettings(state.teacherPassword, next);
       state.settings = Object.assign({}, DEFAULT_SETTINGS, d.settings);
@@ -982,6 +1029,7 @@
     setInterval(() => { if (state.nickname && (state.view === 'LEVELS' || state.view === 'GAME')) syncStudent(); }, 60000);
   }
 
+  useDifficulty(state.settings.difficulty);
   if (!PUZZLES.length) {
     document.getElementById('app').innerHTML = '<div class="page center"><div class="card">js/puzzles.js를 불러오지 못했어요.</div></div>';
   } else {
